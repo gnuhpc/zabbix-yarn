@@ -1,3 +1,4 @@
+from __future__ import division
 import socket
 import requests
 from zabbix_sender.ZabbixPacket import ZabbixPacket
@@ -56,7 +57,7 @@ class ZabbixHadoop:
         # self.apitype= apitype
         self.zaddr = zaddr
         self.zport = zport
-        self.ret_result = ''
+        self.ret_result = []
         self.final_result_dict ={}
         self.zbserver = ZabbixSender(zaddr, zport)
         self._ip = self._getLocalIP(iface)
@@ -67,8 +68,9 @@ class ZabbixHadoop:
             if i == iface:
                 return ifaddresses(i)[2][0]['addr']
 
-    def collect_app_stat(self, state_list=None, type_list=None):
+    def collect_app_stats(self, state_list=None, type_list=None):
         self._type = 5
+        self.final_result_dict ={}
         self.ret_result= self.rm.cluster_application_statistics(state_list=state_list, application_type_list=state_list).data[
             self._API_TYPE[self._type]['API_ID']
         ]['statItem']
@@ -77,11 +79,56 @@ class ZabbixHadoop:
             self.final_result_dict[i['state']] = i['count']
         if len(self.final_result_dict) != 0:
             self._send_zabbix()
+    def colletc_app_metric(self,state=None, final_status=None,
+                           user=None, queue=None, limit=None,
+                           started_time_begin=None, started_time_end=None,
+                           finished_time_begin=None, finished_time_end=None):
+        self._type = 4
+        self.final_result_dict ={}
+        self.ret_result = self.rm.cluster_applications(state=None, final_status=None,
+                                                       user=None, queue=None, limit=None,
+                                                       started_time_begin=None, started_time_end=None,
+                                                       finished_time_begin=None, finished_time_end=None).data[
+            self._API_TYPE[self._type]['API_ID']
+        ]['app']
+        for i in self.ret_result:
+            if i['finalStatus']==u'FAILED' or i['finalStatus']==u'KILLED' :
+                if self.final_result_dict.has_key(i['finalStatus']):
+                    self.final_result_dict[i['finalStatus']] = '%s, %s:%s:%s' % (self.final_result_dict[i['finalStatus']], i['user'],i['name'],i['queue'])
+                else:
+                    self.final_result_dict[i['finalStatus']] = '%s:%s:%s' % (i['user'],i['name'],i['queue'])
+        if len(self.final_result_dict) != 0:
+            self._send_zabbix()
+
+    def collect_cluster_metrics(self):
+        self._type = 2
+        self.final_result_dict = {}
+        self.ret_result = self.rm.cluster_metrics().data[
+            self._API_TYPE[self._type]['API_ID']
+        ]
+        self.final_result_dict['mem_usage'] = self.ret_result['allocatedMB']/self.ret_result['totalMB']
+        self.final_result_dict['vcore_usage'] = self.ret_result['allocatedVirtualCores']/self.ret_result['totalVirtualCores']
+        self.final_result_dict['unhealthyNodes'] = self.ret_result['unhealthyNodes']
+        if len(self.final_result_dict) != 0:
+            self._send_zabbix()
+
+    def collect_scheduler_metrics(self):
+        self._type  = 3
+        self.final_result_dict = {}
+        self.ret_result = self.rm.cluster_scheduler().data[
+            self._API_TYPE[self._type]['API_ID']
+        ]['schedulerInfo']
+        self.final_result_dict['root_used_capacity'] = self.ret_result['usedCapacity']
+        for index,queue in enumerate(self.ret_result['queues']['queue']):
+            self.final_result_dict['queue'+str(index)+'_load'] = queue['usedCapacity']
+        if len(self.final_result_dict) != 0:
+            self._send_zabbix()
 
     def _send_zabbix(self):
         packet = ZabbixPacket()
         for k,v in self.final_result_dict.iteritems():
             packet.add(self._API_TYPE[self._type]['API_PREFIX']+'_'+self._ip, self._API_TYPE[self._type]['KEY_PREFIX']+'['+k+']', v)
+        return 0
         self.zbserver.send(packet)
         print self.zbserver.status
 
@@ -97,6 +144,10 @@ if __name__ == '__main__':
     #For Cluster Metrics
     zh = ZabbixHadoop(iface='{9FBE9029-B06C-4657-992E-15A0F04CD21D}')
     # zh.collect_app_stat(['running'])
-    zh.collect_app_stat(type_list=['spark'])
+    zh.collect_app_stats(type_list=['spark'])
+    zh.colletc_app_metric()
+    zh.collect_cluster_metrics()
+    zh.collect_scheduler_metrics()
+
 
 

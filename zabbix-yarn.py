@@ -2,16 +2,17 @@ import socket
 import requests
 from zabbix_sender.ZabbixPacket import ZabbixPacket
 from zabbix_sender.ZabbixSender import ZabbixSender
+from netifaces import interfaces, ifaddresses, AF_INET
 from yarn_api_client import ApplicationMaster, HistoryServer, NodeManager, ResourceManager
 
+# JMX_ADDR= 'http://BIGL2TMP:8088/jmx'
 ZABBIX_ADDR = '197.3.128.135'
 ZABBIX_PORT = '10051'
-JMX_ADDR= 'http://BIGL2TMP:8088/jmx'
 RM_ADDR = ('hadoop1','hadoop2')
 #RM_ADDR = ('BIGL1TMP','BIGL2TMP')
 
 class ZabbixHadoop:
-    def __init__(self, apitype , zaddr=ZABBIX_ADDR,zport=ZABBIX_PORT):
+    def __init__(self, zaddr=ZABBIX_ADDR,zport=ZABBIX_PORT,iface=None):
         self._API_TYPE = {
             1: {
                 'API_ID': 'clusterInfo',
@@ -50,50 +51,52 @@ class ZabbixHadoop:
                 'KEY_PREFIX':'Nodes'
             },
         }
+        self._type = 1
         self._activerm = self._get_activerm()
-        self.apitype= apitype
+        # self.apitype= apitype
         self.zaddr = zaddr
         self.zport = zport
         self.ret_result = ''
-        self.final_result ={}
+        self.final_result_dict ={}
         self.zbserver = ZabbixSender(zaddr, zport)
-        self._HOSTNAME = socket.gethostname()
+        self._ip = self._getLocalIP(iface)
+        self.rm = ResourceManager(address=self._activerm,timeout=10)
 
+    def _getLocalIP(self,iface):
+        for i in interfaces():
+            if i == iface:
+                return ifaddresses(i)[2][0]['addr']
 
-    def collect_metrics(self):
-        self.ret_result = requests.get(self._API_TYPE[self.apitype]['API_ADDRESS'].replace('RMADDRESS',self._activerm))
-        if self.ret_result.status_code != 200:
-            return -1
-        else:
-            self.ret_result = self.ret_result.json()
-            print self.ret_result
-            if self.apitype==2:
-                self.final_result = self.ret_result[self._API_TYPE[self.apitype]['API_ID']]
+    def collect_app_stat(self, state_list=None, type_list=None):
+        self._type = 5
+        self.ret_result= self.rm.cluster_application_statistics(state_list=state_list, application_type_list=state_list).data[
+            self._API_TYPE[self._type]['API_ID']
+        ]['statItem']
 
-    def send_zabbix(self):
+        for i in self.ret_result:
+            self.final_result_dict[i['state']] = i['count']
+        if len(self.final_result_dict) != 0:
+            self._send_zabbix()
+
+    def _send_zabbix(self):
         packet = ZabbixPacket()
-        for k,v in self.final_result.iteritems():
-            packet.add(self._API_TYPE[self.apitype]['API_PREFIX']+'_'+self._HOSTNAME, self._API_TYPE[self.apitype]['KEY_PREFIX']+'['+k+']', v)
+        for k,v in self.final_result_dict.iteritems():
+            packet.add(self._API_TYPE[self._type]['API_PREFIX']+'_'+self._ip, self._API_TYPE[self._type]['KEY_PREFIX']+'['+k+']', v)
         self.zbserver.send(packet)
         print self.zbserver.status
 
-
     def _get_activerm(self):
         for addr in RM_ADDR:
-            ret_val = requests.get(self._API_TYPE[1]['API_ADDRESS'].replace('RMADDRESS',addr))
+            ret_val = requests.get(self._API_TYPE[self._type]['API_ADDRESS'].replace('RMADDRESS',addr))
             if ret_val.status_code == 200:
-                json_val = ret_val.json()[self._API_TYPE[1]['API_ID']]
+                json_val = ret_val.json()[self._API_TYPE[self._type]['API_ID']]
                 if json_val['haState'] == 'ACTIVE' and json_val['state'] == 'STARTED':
                     return  addr
 
-
-
-
 if __name__ == '__main__':
     #For Cluster Metrics
-    zh1  = ZabbixHadoop(apitype=2)
-    zh1.collect_metrics()
-    zh1.send_zabbix()
+    zh = ZabbixHadoop(iface='{9FBE9029-B06C-4657-992E-15A0F04CD21D}')
+    # zh.collect_app_stat(['running'])
+    zh.collect_app_stat(type_list=['spark'])
 
-    #For
 

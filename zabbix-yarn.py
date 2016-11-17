@@ -6,8 +6,8 @@ from zabbix_sender.ZabbixSender import ZabbixSender
 from netifaces import interfaces, ifaddresses, AF_INET
 from yarn_api_client import ApplicationMaster, HistoryServer, NodeManager, ResourceManager
 
-# JMX_ADDR= 'http://BIGL2TMP:8088/jmx'
-ZABBIX_ADDR = '197.3.128.135'
+# JMX_ADDR= 'http://XXXXXXXX:8088/jmx'
+ZABBIX_ADDR = '192.168.1.35'
 ZABBIX_PORT = '10051'
 RM_ADDR = ('hadoop1','hadoop2')
 #RM_ADDR = ('BIGL1TMP','BIGL2TMP')
